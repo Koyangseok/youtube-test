@@ -108,6 +108,10 @@
   // resume=0 을 주면 이어보기 끔
   const resumeEnabled = (params.get("resume") ?? "1") !== "0";
 
+  // ✅ (옵션) 최초 음소거 파라미터 지원: mute=1 → 시작부터 무음
+  // (content.js postMessage가 주로 제어하지만, 안전장치로 둠)
+  const initialMuteParam = (params.get("mute") ?? "0") === "1";
+
   // 검증
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     errEl.style.display = "block";
@@ -134,7 +138,6 @@
       if (!raw) return 0;
       const obj = JSON.parse(raw);
 
-      // obj = { t: seconds, ts: savedAt }
       const t = Number(obj?.t ?? 0);
       if (!Number.isFinite(t) || t < 0) return 0;
 
@@ -148,8 +151,6 @@
     if (!resumeEnabled) return;
     const t = Number(seconds);
     if (!Number.isFinite(t) || t < 0) return;
-
-    // 너무 초반(예: 0~2초)은 저장 의미 없어서 무시
     if (t < 2) return;
 
     try {
@@ -161,21 +162,46 @@
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
   }
 
-  // 저장된 이어보기 시간 불러오기
   let resumeTime = loadResumeTime();
 
-  // ✅ end가 있는 경우, end 범위 밖이면 무시
   if (safeEnd && resumeTime >= safeEnd - 1) {
     resumeTime = 0;
     clearResumeTime();
   }
 
-  // ✅ start가 있는 경우, resumeTime이 start보다 작으면 start 우선
-  // (즉, "start=30초부터 시작" 강제 설정이 있으면 그게 더 우선)
   let initialStart = start;
   if (resumeEnabled && resumeTime > start + 1) {
     initialStart = resumeTime;
   }
+
+  // =========================
+  // ✅ 외부(content.js)에서 보내는 mute/unmute 메시지 처리
+  // =========================
+  let player = null;
+
+  // 현재 원하는 음소거 상태(플레이어 생성 전에도 받을 수 있게 저장)
+  let desiredMuted = initialMuteParam;
+
+  function applyMuteState() {
+    try {
+      if (!player) return;
+      if (desiredMuted) player.mute();
+      else player.unMute();
+    } catch {}
+  }
+
+  window.addEventListener("message", (event) => {
+    const data = event?.data;
+    if (!data || data.source !== "GYS") return;
+
+    if (data.type === "SET_MUTE") {
+      desiredMuted = !!data.muted;
+      applyMuteState();
+
+      // 디버그 토스트 (원하면 주석처리)
+      // toast(desiredMuted ? "🔇 음소거" : "🔊 음소거 해제", 800);
+    }
+  });
 
   // =========================
   // ✅ YouTube IFrame API 로드
@@ -184,7 +210,6 @@
   tag.src = "https://www.youtube.com/iframe_api";
   document.head.appendChild(tag);
 
-  let player = null;
   let saveTimer = null;
   let didSeekResume = false;
 
@@ -200,7 +225,6 @@
         rel: rel,
         start: Math.floor(initialStart),
         ...(safeEnd ? { end: Math.floor(safeEnd) } : {}),
-        // 키보드/정보 등은 필요하면 추가 가능
       },
       events: {
         onReady: onReady,
@@ -211,8 +235,10 @@
   };
 
   function onReady() {
-    // start 파라미터로 이미 들어가지만
-    // 어떤 환경에서는 start가 무시될 때가 있어 한번 더 보정 seek
+    // ✅ 플레이어 준비되면, 원하는 mute 상태 적용
+    applyMuteState();
+
+    // start가 무시되는 환경 보정
     if (resumeEnabled && !didSeekResume && initialStart > 0) {
       try {
         player.seekTo(initialStart, true);
@@ -226,7 +252,6 @@
       try {
         if (!player) return;
         const state = player.getPlayerState();
-        // 재생중(1) / 일시정지(2) / 버퍼링(3) 정도일 때만 저장
         if (state === 1 || state === 2 || state === 3) {
           const t = player.getCurrentTime();
           saveResumeTime(t);
@@ -248,11 +273,12 @@
 
   function onStateChange(e) {
     try {
-      // 영상 끝남(0) → 이어보기 기록 삭제
+      // ✅ 상태 변동 때 mute가 풀리는 경우가 있어서 한 번 더 보정
+      applyMuteState();
+
       if (e.data === YT.PlayerState.ENDED) {
         clearResumeTime();
       }
-      // 일시정지(2) → 즉시 저장
       if (e.data === YT.PlayerState.PAUSED) {
         saveResumeTime(player.getCurrentTime());
       }
@@ -260,7 +286,6 @@
   }
 
   function onError(e) {
-    // 임베드 제한 영상/차단 등
     errEl.style.display = "block";
     errEl.innerHTML =
       "이 영상은 임베드로 재생이 제한되었거나 오류가 발생했습니다.<br><br>" +
