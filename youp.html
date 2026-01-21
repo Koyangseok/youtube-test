@@ -6,7 +6,7 @@
   <title>YouTube Player</title>
   <style>
     html, body { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden; }
-    iframe { width:100%; height:100%; border:0; display:block; }
+    #playerWrap { width:100%; height:100%; }
     .error {
       position:fixed; inset:0;
       padding:16px;
@@ -15,11 +15,28 @@
       color:#9bd0ff; background:#000;
     }
     a{ color:#9bd0ff; }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 16px;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,.72);
+      color: #fff;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-family: Arial, system-ui, -apple-system, Segoe UI, Roboto;
+      font-size: 13px;
+      display:none;
+      z-index: 9999;
+      user-select:none;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
-  <iframe id="ytFrame" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen></iframe>
+  <div id="playerWrap"></div>
   <div class="error" id="err" style="display:none;"></div>
+  <div class="toast" id="toast"></div>
 
 <script>
   function getInt(v, d=0) {
@@ -49,8 +66,15 @@
     }
   }
 
-  const frame = document.getElementById("ytFrame");
   const errEl = document.getElementById("err");
+  const toastEl = document.getElementById("toast");
+
+  function toast(msg, ms=1500) {
+    toastEl.textContent = msg;
+    toastEl.style.display = "block";
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(() => toastEl.style.display = "none", ms);
+  }
 
   const params = new URLSearchParams(location.search);
 
@@ -67,20 +91,22 @@
   if (!videoId) {
     const raw = location.search.startsWith("?") ? location.search.slice(1) : "";
     if (raw.startsWith("http")) {
-      // raw 예: https://youtu.be/xxx&rel=0^0^0
-      const onlyUrl = raw.split("&")[0]; // 첫번째 & 전까지만 URL로 취급
+      const onlyUrl = raw.split("&")[0];
       videoId = extractIdFromUrl(onlyUrl);
     }
   }
 
-  // start/end/rel 파싱 (없으면 0)
+  // start/end/rel 파싱
   const start = Math.max(0, getInt(params.get("start"), 0));
   const end = Math.max(0, getInt(params.get("end"), 0));
   let rel = params.get("rel") ?? "0";
 
-  // ✅ 예전 rel=0^0^0 같은 값이면 0만 사용
   if (typeof rel === "string" && rel.includes("^")) rel = rel.split("^")[0];
   rel = (rel === "1") ? "1" : "0";
+
+  // ✅ 이어보기 옵션 (기본 ON)
+  // resume=0 을 주면 이어보기 끔
+  const resumeEnabled = (params.get("resume") ?? "1") !== "0";
 
   // 검증
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
@@ -96,15 +122,151 @@
 
   const safeEnd = (end > start) ? end : 0;
 
-  const embedParams = new URLSearchParams({
-    autoplay: "1",
-    playsinline: "1",
-    rel: rel,
-    start: String(start)
-  });
-  if (safeEnd) embedParams.set("end", String(safeEnd));
+  // =========================
+  // ✅ 이어보기 저장/복원 로직
+  // =========================
+  const STORAGE_KEY = `YT_RESUME_${videoId}`;
 
-  frame.src = `https://www.youtube.com/embed/${videoId}?${embedParams.toString()}`;
+  function loadResumeTime() {
+    if (!resumeEnabled) return 0;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return 0;
+      const obj = JSON.parse(raw);
+
+      // obj = { t: seconds, ts: savedAt }
+      const t = Number(obj?.t ?? 0);
+      if (!Number.isFinite(t) || t < 0) return 0;
+
+      return t;
+    } catch {
+      return 0;
+    }
+  }
+
+  function saveResumeTime(seconds) {
+    if (!resumeEnabled) return;
+    const t = Number(seconds);
+    if (!Number.isFinite(t) || t < 0) return;
+
+    // 너무 초반(예: 0~2초)은 저장 의미 없어서 무시
+    if (t < 2) return;
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ t: t, ts: Date.now() }));
+    } catch {}
+  }
+
+  function clearResumeTime() {
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  }
+
+  // 저장된 이어보기 시간 불러오기
+  let resumeTime = loadResumeTime();
+
+  // ✅ end가 있는 경우, end 범위 밖이면 무시
+  if (safeEnd && resumeTime >= safeEnd - 1) {
+    resumeTime = 0;
+    clearResumeTime();
+  }
+
+  // ✅ start가 있는 경우, resumeTime이 start보다 작으면 start 우선
+  // (즉, "start=30초부터 시작" 강제 설정이 있으면 그게 더 우선)
+  let initialStart = start;
+  if (resumeEnabled && resumeTime > start + 1) {
+    initialStart = resumeTime;
+  }
+
+  // =========================
+  // ✅ YouTube IFrame API 로드
+  // =========================
+  const tag = document.createElement('script');
+  tag.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(tag);
+
+  let player = null;
+  let saveTimer = null;
+  let didSeekResume = false;
+
+  // API가 준비되면 자동 호출됨
+  window.onYouTubeIframeAPIReady = function () {
+    player = new YT.Player('playerWrap', {
+      width: '100%',
+      height: '100%',
+      videoId: videoId,
+      playerVars: {
+        autoplay: 1,
+        playsinline: 1,
+        rel: rel,
+        start: Math.floor(initialStart),
+        ...(safeEnd ? { end: Math.floor(safeEnd) } : {}),
+        // 키보드/정보 등은 필요하면 추가 가능
+      },
+      events: {
+        onReady: onReady,
+        onStateChange: onStateChange,
+        onError: onError
+      }
+    });
+  };
+
+  function onReady() {
+    // start 파라미터로 이미 들어가지만
+    // 어떤 환경에서는 start가 무시될 때가 있어 한번 더 보정 seek
+    if (resumeEnabled && !didSeekResume && initialStart > 0) {
+      try {
+        player.seekTo(initialStart, true);
+        didSeekResume = true;
+        toast(`이어보기: ${Math.floor(initialStart)}초부터 재생`);
+      } catch {}
+    }
+
+    // 4초마다 현재시간 저장
+    saveTimer = setInterval(() => {
+      try {
+        if (!player) return;
+        const state = player.getPlayerState();
+        // 재생중(1) / 일시정지(2) / 버퍼링(3) 정도일 때만 저장
+        if (state === 1 || state === 2 || state === 3) {
+          const t = player.getCurrentTime();
+          saveResumeTime(t);
+        }
+      } catch {}
+    }, 4000);
+
+    // 탭 숨김/종료 시 한번 더 저장
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        try { saveResumeTime(player.getCurrentTime()); } catch {}
+      }
+    });
+
+    window.addEventListener("beforeunload", () => {
+      try { saveResumeTime(player.getCurrentTime()); } catch {}
+    });
+  }
+
+  function onStateChange(e) {
+    try {
+      // 영상 끝남(0) → 이어보기 기록 삭제
+      if (e.data === YT.PlayerState.ENDED) {
+        clearResumeTime();
+      }
+      // 일시정지(2) → 즉시 저장
+      if (e.data === YT.PlayerState.PAUSED) {
+        saveResumeTime(player.getCurrentTime());
+      }
+    } catch {}
+  }
+
+  function onError(e) {
+    // 임베드 제한 영상/차단 등
+    errEl.style.display = "block";
+    errEl.innerHTML =
+      "이 영상은 임베드로 재생이 제한되었거나 오류가 발생했습니다.<br><br>" +
+      "YouTube 오류 코드: <b>" + (e?.data ?? "unknown") + "</b><br><br>" +
+      "가능하면 원본 YouTube 페이지에서 재생해야 합니다.";
+  }
 </script>
 </body>
 </html>
