@@ -1,136 +1,211 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<title>유튜브 영상 플레이어</title>
-
-<style>
-body {
-  font-family: Arial, sans-serif;
-  background: #f5f5f5;
-  margin: 0;
-  padding: 40px;
-}
-.container {
-  max-width: 800px;
-  margin: auto;
-  background: #fff;
-  padding: 30px;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0,0,0,.1);
-}
-h1 {
-  text-align: center;
-}
-.row {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 15px;
-}
-input {
-  flex: 1;
-  padding: 10px;
-  font-size: 16px;
-}
-button {
-  padding: 10px 16px;
-  font-size: 16px;
-  cursor: pointer;
-  border: none;
-  border-radius: 4px;
-}
-.load {
-  background: #ff0000;
-  color: #fff;
-}
-.save {
-  background: #4CAF50;
-  color: #fff;
-}
-.copy {
-  background: #2196F3;
-  color: #fff;
-}
-.preview {
-  background: #9C27B0;
-  color: #fff;
-}
-.result {
-  margin-top: 15px;
-  word-break: break-all;
-}
-iframe {
-  width: 100%;
-  height: 450px;
-  margin-top: 20px;
-  border: none;
-  display: none;
-}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>유튜브 영상 플레이어</title>
+  <style>
+    body{margin:0;font-family:Arial,system-ui,-apple-system,Segoe UI,Roboto; background:#f4f4f4;}
+    .wrap{max-width:980px;margin:0 auto;padding:28px 16px;}
+    .card{background:#fff;border-radius:12px;box-shadow:0 2px 14px rgba(0,0,0,.08);padding:18px 18px 16px;}
+    h1{margin:0 0 14px;text-align:center;font-size:26px;color:#222;}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+    .row > *{flex:1}
+    input[type="text"]{width:100%;padding:12px 12px;border:1px solid #ddd;border-radius:8px;font-size:16px;}
+    .btn{flex:0 0 auto;padding:12px 16px;border:0;border-radius:8px;cursor:pointer;font-size:14px;color:#fff}
+    .btn-red{background:#ff0000}
+    .btn-red:hover{background:#cc0000}
+    .btn-green{background:#4CAF50}
+    .btn-green:hover{background:#45a049}
+    .btn-blue{background:#2196F3}
+    .btn-blue:hover{background:#0b7dda}
+    .btn-purple{background:#9C27B0}
+    .btn-purple:hover{background:#7B1FA2}
+    .small{font-size:13px;color:#666;margin-top:10px}
+    .error{color:#0b57d0;font-size:13px;margin-top:8px;display:none}
+    .linkbox{margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .link{flex:1;min-width:240px;word-break:break-all;color:#0b57d0;text-decoration:underline}
+    .timebox{margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .timebox label{font-size:14px;color:#333;flex:0 0 auto}
+    .timebox input{width:110px;flex:0 0 auto}
+  </style>
 </head>
-
 <body>
-<div class="container">
-  <h1>유튜브 영상 플레이어</h1>
+  <div class="wrap">
+    <div class="card">
+      <h1>유튜브 영상 플레이어</h1>
 
-  <div class="row">
-    <input id="ytUrl" placeholder="유튜브 URL 입력">
-    <button class="load" onclick="makeLink()">불러오기</button>
+      <div class="row">
+        <input id="ytUrl" type="text" placeholder="유튜브 URL 또는 영상 ID를 입력하세요 (예: https://youtu.be/...)">
+        <button id="loadBtn" class="btn btn-red">불러오기</button>
+      </div>
+
+      <div class="timebox">
+        <label>시작 시간</label>
+        <input id="startTime" type="text" placeholder="예: 1:20 또는 80">
+        <label>종료 시간</label>
+        <input id="endTime" type="text" placeholder="예: 3:10 또는 190">
+        <button id="saveBtn" class="btn btn-green">보관하기</button>
+      </div>
+
+      <div id="err" class="error">올바른 유튜브 URL/ID를 입력해주세요.</div>
+
+      <div id="linkArea" class="linkbox" style="display:none;">
+        <a id="genLink" class="link" href="#" target="_blank" rel="noopener">링크</a>
+        <button id="copyBtn" class="btn btn-blue">링크복사하기</button>
+        <button id="previewBtn" class="btn btn-purple">미리보기</button>
+      </div>
+
+      <div class="small">
+        생성되는 링크는 내 도메인 기준입니다: <b>https://youtube-test-gilt.vercel.app/youp.html</b><br/>
+        파라미터: <code>?url=...&start=...&end=...&rel=0</code>
+      </div>
+    </div>
   </div>
-
-  <div class="row">
-    <input id="start" placeholder="시작 시간 (초)" value="0">
-    <input id="end" placeholder="종료 시간 (초)" value="0">
-    <button class="save" onclick="makeLink()">보관하기</button>
-  </div>
-
-  <div class="row">
-    <button class="copy" onclick="copyLink()">링크복사</button>
-    <button class="preview" onclick="preview()">미리보기</button>
-  </div>
-
-  <div class="result" id="result"></div>
-
-  <iframe id="previewFrame"></iframe>
-</div>
 
 <script>
-const BASE = "https://youtube-test-gilt.vercel.app/youp.html";
-let lastLink = "";
+  // ✅ 내 도메인 고정 (원하면 바꾸기)
+  const YOUP_BASE = "https://youtube-test-gilt.vercel.app/youp.html";
 
-function makeLink() {
-  const url = document.getElementById("ytUrl").value.trim();
-  if (!url.includes("youtu")) {
-    alert("올바른 유튜브 URL을 입력하세요");
-    return;
+  // "1:20" 또는 "80" → 초로 변환
+  function parseTimeToSeconds(v) {
+    const s = (v || "").trim();
+    if (!s) return 0;
+    if (/^\d+$/.test(s)) return parseInt(s, 10);
+
+    // 1:20, 01:02:03 등 지원
+    const parts = s.split(":").map(x => x.trim()).filter(Boolean);
+    if (!parts.length || parts.some(p => !/^\d+$/.test(p))) return 0;
+
+    let sec = 0;
+    for (const p of parts) sec = sec * 60 + parseInt(p, 10);
+    return sec;
   }
 
-  const start = parseInt(document.getElementById("start").value || "0", 10);
-  const end = parseInt(document.getElementById("end").value || "0", 10);
+  // 유튜브 ID 추출 (watch, youtu.be, shorts, embed, raw id 모두 지원)
+  function extractYouTubeId(input) {
+    const raw = (input || "").trim();
+    if (!raw) return null;
 
-  const params = new URLSearchParams({
-    url: url,
-    start: start,
-    end: end,
-    rel: 0
+    // 이미 ID만 들어온 경우 (대충 11자)
+    if (/^[a-zA-Z0-9_-]{11}$/.test(raw)) return raw;
+
+    try {
+      const u = new URL(raw);
+
+      // youtu.be/<id>
+      if (u.hostname.includes("youtu.be")) {
+        const id = u.pathname.split("/").filter(Boolean)[0];
+        return /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
+      }
+
+      // youtube.com/watch?v=<id>
+      const v = u.searchParams.get("v");
+      if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+
+      // /shorts/<id>
+      const shorts = u.pathname.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
+      if (shorts) return shorts[1];
+
+      // /embed/<id>
+      const embed = u.pathname.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+      if (embed) return embed[1];
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  function makeYoupLink(ytInput, startSec, endSec) {
+    const id = extractYouTubeId(ytInput);
+    if (!id) return null;
+
+    // url 파라미터에 "영상 URL"을 넣고 싶으면 아래처럼:
+    // const videoUrl = `https://youtu.be/${id}`;
+
+    // 여기서는 가장 안정적인 방식: ID만 전달
+    const params = new URLSearchParams({
+      v: id,
+      start: String(Math.max(0, startSec || 0)),
+      end: String(Math.max(0, endSec || 0)),
+      rel: "0"
+    });
+
+    return `${YOUP_BASE}?${params.toString()}`;
+  }
+
+  const $ytUrl = document.getElementById("ytUrl");
+  const $start = document.getElementById("startTime");
+  const $end = document.getElementById("endTime");
+  const $err = document.getElementById("err");
+  const $linkArea = document.getElementById("linkArea");
+  const $genLink = document.getElementById("genLink");
+
+  function showError(msg) {
+    $err.textContent = msg;
+    $err.style.display = "block";
+    $linkArea.style.display = "none";
+  }
+
+  function showLink(link) {
+    $err.style.display = "none";
+    $linkArea.style.display = "flex";
+    $genLink.href = link;
+    $genLink.textContent = link;
+  }
+
+  function buildAndShowLink() {
+    const startSec = parseTimeToSeconds($start.value);
+    const endSec = parseTimeToSeconds($end.value);
+
+    const link = makeYoupLink($ytUrl.value, startSec, endSec);
+    if (!link) {
+      showError("올바른 유튜브 URL 또는 영상 ID(11자)를 입력해주세요.");
+      return null;
+    }
+    showLink(link);
+    return link;
+  }
+
+  document.getElementById("loadBtn").addEventListener("click", () => {
+    // 불러오기 = 링크 생성만 (원하면 여기서 바로 새창 열어도 됨)
+    buildAndShowLink();
   });
 
-  lastLink = `${BASE}?${params.toString()}`;
-  document.getElementById("result").innerText = lastLink;
-}
+  document.getElementById("saveBtn").addEventListener("click", () => {
+    // 보관하기 = 링크 생성 (필요하면 localStorage 저장도 가능)
+    buildAndShowLink();
+  });
 
-function copyLink() {
-  if (!lastLink) return;
-  navigator.clipboard.writeText(lastLink);
-  alert("링크가 복사되었습니다");
-}
+  document.getElementById("copyBtn").addEventListener("click", async () => {
+    const link = buildAndShowLink();
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      alert("링크가 복사되었습니다.");
+    } catch {
+      // clipboard 막힌 환경 대비
+      const ta = document.createElement("textarea");
+      ta.value = link;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      alert("링크가 복사되었습니다.");
+    }
+  });
 
-function preview() {
-  if (!lastLink) return;
-  const iframe = document.getElementById("previewFrame");
-  iframe.src = lastLink;
-  iframe.style.display = "block";
-}
+  document.getElementById("previewBtn").addEventListener("click", () => {
+    const link = buildAndShowLink();
+    if (!link) return;
+    window.open(link, "_blank", "noopener");
+  });
+
+  // Enter로도 동작
+  $ytUrl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") buildAndShowLink();
+  });
 </script>
 </body>
 </html>
