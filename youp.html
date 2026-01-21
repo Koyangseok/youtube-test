@@ -137,20 +137,27 @@
       // obj = { t: seconds, ts: savedAt }
       const t = Number(obj?.t ?? 0);
       if (!Number.isFinite(t) || t < 0) return 0;
-
       return t;
     } catch {
       return 0;
     }
   }
 
+  // ✅ 더 촘촘 + 중복 저장 방지
+  let lastSavedSec = 0;
+
   function saveResumeTime(seconds) {
     if (!resumeEnabled) return;
-    const t = Number(seconds);
+
+    const t = Math.floor(Number(seconds));
     if (!Number.isFinite(t) || t < 0) return;
 
     // 너무 초반(예: 0~2초)은 저장 의미 없어서 무시
     if (t < 2) return;
+
+    // ✅ 같은 값 너무 자주 저장 방지
+    if (Math.abs(t - lastSavedSec) < 1) return;
+    lastSavedSec = t;
 
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ t: t, ts: Date.now() }));
@@ -171,7 +178,6 @@
   }
 
   // ✅ start가 있는 경우, resumeTime이 start보다 작으면 start 우선
-  // (즉, "start=30초부터 시작" 강제 설정이 있으면 그게 더 우선)
   let initialStart = start;
   if (resumeEnabled && resumeTime > start + 1) {
     initialStart = resumeTime;
@@ -188,6 +194,23 @@
   let saveTimer = null;
   let didSeekResume = false;
 
+  // ✅ 이어보기 SEEK를 더 빠르게 확정 적용 (Ready + 상태변화에서도 재시도)
+  function fastApplyResumeSeek() {
+    if (!resumeEnabled) return;
+    if (didSeekResume) return;
+    if (initialStart <= 0) return;
+
+    try {
+      // ✅ duration이 잡혀야 seek가 안정적임
+      const dur = player?.getDuration?.() ?? 0;
+      if (dur > 0) {
+        player.seekTo(initialStart, true);
+        didSeekResume = true;
+        toast(`이어보기: ${Math.floor(initialStart)}초부터 재생`);
+      }
+    } catch {}
+  }
+
   // API가 준비되면 자동 호출됨
   window.onYouTubeIframeAPIReady = function () {
     player = new YT.Player('playerWrap', {
@@ -200,7 +223,6 @@
         rel: rel,
         start: Math.floor(initialStart),
         ...(safeEnd ? { end: Math.floor(safeEnd) } : {}),
-        // 키보드/정보 등은 필요하면 추가 가능
       },
       events: {
         onReady: onReady,
@@ -211,28 +233,24 @@
   };
 
   function onReady() {
-    // start 파라미터로 이미 들어가지만
-    // 어떤 환경에서는 start가 무시될 때가 있어 한번 더 보정 seek
-    if (resumeEnabled && !didSeekResume && initialStart > 0) {
-      try {
-        player.seekTo(initialStart, true);
-        didSeekResume = true;
-        toast(`이어보기: ${Math.floor(initialStart)}초부터 재생`);
-      } catch {}
-    }
+    // ✅ onReady 순간 바로 이어보기 시도
+    fastApplyResumeSeek();
 
-    // 4초마다 현재시간 저장
+    // ✅ 일부 환경에서 ready 직후 seek 씹히는 경우 보정
+    setTimeout(fastApplyResumeSeek, 200);
+    setTimeout(fastApplyResumeSeek, 600);
+
+    // ✅ 1.5초마다 현재시간 저장 (더 정확하게 이어보기)
     saveTimer = setInterval(() => {
       try {
         if (!player) return;
         const state = player.getPlayerState();
         // 재생중(1) / 일시정지(2) / 버퍼링(3) 정도일 때만 저장
         if (state === 1 || state === 2 || state === 3) {
-          const t = player.getCurrentTime();
-          saveResumeTime(t);
+          saveResumeTime(player.getCurrentTime());
         }
       } catch {}
-    }, 4000);
+    }, 1500);
 
     // 탭 숨김/종료 시 한번 더 저장
     document.addEventListener("visibilitychange", () => {
@@ -244,14 +262,25 @@
     window.addEventListener("beforeunload", () => {
       try { saveResumeTime(player.getCurrentTime()); } catch {}
     });
+
+    // ✅ 모바일/웹뷰에서 beforeunload가 안먹는 경우 대비
+    window.addEventListener("pagehide", () => {
+      try { saveResumeTime(player.getCurrentTime()); } catch {}
+    });
   }
 
   function onStateChange(e) {
     try {
+      // ✅ 재생 시작 / 버퍼링 순간에도 이어보기 seek 재확정
+      if (e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.BUFFERING) {
+        fastApplyResumeSeek();
+      }
+
       // 영상 끝남(0) → 이어보기 기록 삭제
       if (e.data === YT.PlayerState.ENDED) {
         clearResumeTime();
       }
+
       // 일시정지(2) → 즉시 저장
       if (e.data === YT.PlayerState.PAUSED) {
         saveResumeTime(player.getCurrentTime());
