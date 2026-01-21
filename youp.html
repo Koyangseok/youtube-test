@@ -12,80 +12,26 @@
       background: #000;
       height: 100%;
       overflow: hidden;
-      font-family: Arial, system-ui, -apple-system, Segoe UI, Roboto;
-      color: #fff;
     }
-
-    .topbar {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      z-index: 10;
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      padding: 10px 12px;
-      background: rgba(0,0,0,0.5);
-      backdrop-filter: blur(6px);
-      box-sizing: border-box;
-    }
-
-    .meta {
-      flex: 1;
-      font-size: 13px;
-      color: #ddd;
-      word-break: break-all;
-    }
-
-    .btn {
-      border: 0;
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: #222;
-      color: #fff;
-      cursor: pointer;
-      font-size: 13px;
-    }
-    .btn:hover { background: #333; }
-
-    .player {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-    }
-
     iframe {
       width: 100%;
       height: 100%;
       border: 0;
       display: block;
     }
-
     .error {
-      padding: 70px 14px 14px;
+      padding: 18px;
       font-size: 14px;
       color: #9bd0ff;
       line-height: 1.5;
+      font-family: Arial, system-ui, -apple-system, Segoe UI, Roboto;
     }
-
     a { color: #9bd0ff; }
   </style>
 </head>
 
 <body>
-  <div class="topbar">
-    <div class="meta" id="meta">로딩중...</div>
-    <button class="btn" id="homeBtn">메인으로</button>
-    <button class="btn" id="copyBtn">현재링크 복사</button>
-  </div>
-
-  <div class="player" id="playerBox" style="display:none;">
-    <iframe id="ytFrame" allowfullscreen></iframe>
-  </div>
-
+  <iframe id="ytFrame" allowfullscreen></iframe>
   <div class="error" id="err" style="display:none;"></div>
 
 <script>
@@ -94,9 +40,6 @@
     return Number.isFinite(n) ? n : d;
   }
 
-  // ✅ 파라미터 읽기
-  // 지원 형태 1) youp.html?v=영상ID&start=0&end=0&rel=0   (추천)
-  // 지원 형태 2) youp.html?url=https://youtu.be/영상ID...   (예전 방식 호환)
   const params = new URLSearchParams(location.search);
 
   let videoId = params.get("v");
@@ -122,34 +65,10 @@
   const end = Math.max(0, getInt(params.get("end"), 0));
   const rel = (params.get("rel") === "1") ? "1" : "0";
 
-  const metaEl = document.getElementById("meta");
   const errEl = document.getElementById("err");
-  const playerBox = document.getElementById("playerBox");
   const frame = document.getElementById("ytFrame");
 
-  document.getElementById("homeBtn").addEventListener("click", () => {
-    location.href = "/";
-  });
-
-  document.getElementById("copyBtn").addEventListener("click", async () => {
-    const link = location.href;
-    try {
-      await navigator.clipboard.writeText(link);
-      alert("현재 링크가 복사되었습니다.");
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = link;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      ta.remove();
-      alert("현재 링크가 복사되었습니다.");
-    }
-  });
-
-  // ✅ 유효성 검사
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    metaEl.textContent = "오류";
     errEl.style.display = "block";
     errEl.innerHTML =
       "영상 정보가 없습니다.<br><br>" +
@@ -163,7 +82,7 @@
   // end가 start보다 작거나 같으면 end는 무시
   const safeEnd = (end > start) ? end : 0;
 
-  // ✅ embed URL 생성
+  // embed URL 생성
   const embedParams = new URLSearchParams({
     autoplay: "1",
     rel: rel,
@@ -172,11 +91,7 @@
   });
   if (safeEnd) embedParams.set("end", String(safeEnd));
 
-  const src = `https://www.youtube.com/embed/${videoId}?${embedParams.toString()}`;
-
-  metaEl.textContent = `v=${videoId} / start=${start}s / end=${safeEnd ? safeEnd + "s" : "없음"} / rel=${rel}`;
-  frame.src = src;
-  playerBox.style.display = "block";
+  frame.src = `https://www.youtube.com/embed/${videoId}?${embedParams.toString()}`;
 </script>
 </body>
 </html>
