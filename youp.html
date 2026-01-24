@@ -390,14 +390,15 @@
           
           if (current === 'unknown' || !available || available.length === 0) return;
           
-          const max = available[0];
-          // ✅ 현재 화질이 최고가 아니면 복원
-          if (current !== max && 
-              current !== 'hd2160' && 
-              current !== 'hd1440' && 
-              current !== 'hd1080' && 
-              current !== 'hd720') {
-            player.setPlaybackQuality(max);
+          // ✅ large(480p), medium(360p), small(240p) 등 저화질이면 즉시 복원
+          if (current === 'large' || current === 'medium' || current === 'small' || current === 'tiny') {
+            if (available.includes('hd1080')) {
+              player.setPlaybackQuality('hd1080');
+            } else if (available.includes('hd720')) {
+              player.setPlaybackQuality('hd720');
+            } else {
+              player.setPlaybackQuality(available[0]);
+            }
           }
         }
       } catch {}
@@ -443,15 +444,29 @@
       if (e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.BUFFERING) {
         wasPlayingBeforeHide = true;
         
-        // ✅ 재생 시작 시 최고화질로 재설정
+        // ✅ 재생/버퍼링 시작 시마다 최고화질로 강제 설정
         setTimeout(() => {
           try {
             const available = player.getAvailableQualityLevels();
-            if (available && available.length > 0) {
-              player.setPlaybackQuality(available[0]);
+            const current = player.getPlaybackQuality();
+            
+            if (available && available.length > 0 && current !== 'unknown') {
+              // large, medium, small 등 저화질이면 강제로 HD로 변경
+              if (current === 'large' || current === 'medium' || current === 'small' || current === 'tiny') {
+                if (available.includes('hd1080')) {
+                  player.setPlaybackQuality('hd1080');
+                  toast('→ 1080p 강제 적용', 2000);
+                } else if (available.includes('hd720')) {
+                  player.setPlaybackQuality('hd720');
+                  toast('→ 720p 강제 적용', 2000);
+                } else {
+                  player.setPlaybackQuality(available[0]);
+                  toast('→ 최고화질 강제 적용', 2000);
+                }
+              }
             }
           } catch {}
-        }, 100);
+        }, 300);
       }
 
       if (e.data === YT.PlayerState.ENDED) {
